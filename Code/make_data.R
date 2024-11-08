@@ -10,7 +10,7 @@ library(dplyr)
 library(gridExtra)
 
 environment <- new.env()
-source(file = "./ftns_v1.R", local = environment)
+source(file = "./functions_make_data.R", local = environment)
 attach(environment)
 
 alpha <- 0.05   # statistical significance level
