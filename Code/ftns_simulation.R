@@ -8,7 +8,7 @@
 # E: Random sampling from the Gaussian distribution based on the error model
 # N_test, N_cros: 각각의 분석에서 사용할 true curve 개수
 # K: The number of iterations for one scenario
-# threshold: Detection limit of viral load
+# detectionlimit: Detection limit of viral load
 
 
 
@@ -136,16 +136,8 @@ simulate_population_parameters <- function(predicted_parameters, population_para
   simulated_parameters <- data.frame(gamma = rlnorm(n, meanlog = log(predicted_parameters$gamma), sdlog = omega_gamma),
                                      beta = rlnorm(n, meanlog = log(predicted_parameters$beta), sdlog = omega_beta),
                                      delta = rlnorm(n, meanlog = log(predicted_parameters$delta), sdlog = omega_delta),
-                                     tau = rgamma(1, shape=4.09, scale=1.08))
-  
-  # Original estimated distribution
-  # rlnorm(n, meanlog = log(predicted_parameters$tau), sdlog = omega_tau)
-  
-  # [ref] Delta
-  # T.tau <- rgamma(1, shape=4.09, scale=1.08)
-  # [ref] Omicron
-  # T.tau <- rgamma(1, shape=4.07, scale=1.12)
-  colnames(simulated_parameters) <- c("gamma", "beta", "delta", "tau") #, "tau"
+                                     tau = rgamma(1, shape=4.09, scale=1.08)) # from reference, mean=4.43, sd=2.19
+  colnames(simulated_parameters) <- c("gamma", "beta", "delta", "tau")
   rownames(simulated_parameters) <- NULL
   return(simulated_parameters)
 }
@@ -179,30 +171,43 @@ make_obs_vl <- function(true_vl_df, IDnum, Tnum, Snum, Mnum) {
   return(obsvl)
 }
 
-sim_paras <- function(params_data, S, M, N_partici, iter){
+
+###
+estimate_groundtruth <- function(true_vl_par_10000, S, M, N_partici, iter){
   
-  # population parameters
-  pop_params <- parameter_confidence_intervals(params_data)
-  pred_pop_params <- get_predicted_parameters(pop_params)
-  
-  # parameters for 10,000 truth VL
-  sim_params <- simulate_population_parameters(pred_pop_params, pop_params, N)
-  true_vl_par <- data.frame(ID=1:N, beta=sim_params$beta,
-                            gamma=sim_params$gamma,
-                            delta=sim_params$delta) #,tau=sim_params$tau
-  
-  ## For longitudinal
   true_vl <- data.frame(time=times)
+  
   # Random sampling from true viral load parameters
-  true_vl_par <- true_vl_par[sample(1:N, N_partici, replace = F),]
+  true_vl_par <- true_vl_par_10000[sample(1:N, N_partici, replace = F),]
   true_vl_par$ID <- 1:N_partici
+  
   for (i in 1:N_partici) {
     indiVL <- make_indiVL(i,true_vl_par)
     true_vl[[paste0("VL_", i)]] <- indiVL$aV 
   }
   
+  # write.csv(true_vl, paste0(data_path_ground_truth, N_test, "truedata_N_",N_partici,"_M_",M,"_S_",S,"_realnbr_", iter, ".csv"))
   # Only integer times
   true_vl <- true_vl[true_vl$time %in% seq(0, 30, by = 1), ]
+  
+  # Fit population VL of true_vl
+  true_vl_long <- true_vl %>%
+    pivot_longer(cols = starts_with("VL_"), names_to = "ID", values_to = "VL") %>%
+    mutate(ID = as.integer(sub("VL_", "", ID)),
+           censored = 0)
+  true_vl_long['censored'] <- as.numeric(true_vl_long$VL <= detectionlimit)
+  true_vl_long[true_vl_long['censored']==1,'VL'] <- detectionlimit
+  # write.csv(true_vl_long, paste0(data_path_ground_truth, N_test, "truedata_N_",N_partici,"_M_",M,"_S_",S,"_", iter, ".csv"))
+  # run_monolix_script_ground_truth(N_partici, M, S) # estimated trajectory of ground truth VL
+  
+  return(true_vl)
+}
+
+
+
+##
+
+sim_paras <- function(true_vl, S, M, N_partici, iter){
   
   # Generate observed VLs
   obs_vl <- data.frame(ID=rep(1:N_partici,each=M), time=as.numeric(NA), VL=as.numeric(NA))
@@ -210,8 +215,6 @@ sim_paras <- function(params_data, S, M, N_partici, iter){
     repeat {
       # Delta
       T.tau <- rgamma(1, shape=4.09, scale=1.08) # rate = 0.92
-      # Omicron
-      # T.tau <- rgamma(1, shape=3.93, scale=0.92)      
       T.tau <- ceiling(T.tau)
       if ((T.tau + S*M) <= max_time) break
     }
@@ -227,17 +230,17 @@ sim_paras <- function(params_data, S, M, N_partici, iter){
       obs_vl[(1+M*(i-1)):(M*(i)),"error"] <- obs_vl_value[,2]
     }
   }
-
+  
   ## Estimate the population parameters for longitudinal or cross-sectional data.
   if (M==1){
-    obs_vl['censored'] <- as.numeric(obs_vl$VL <= threshold)
-    obs_vl[obs_vl['censored']==1,'VL'] <- threshold
+    obs_vl['censored'] <- as.numeric(obs_vl$VL <= detectionlimit)
+    obs_vl[obs_vl['censored']==1,'VL'] <- detectionlimit
     obs_vl['ID2'] <- 1
   } else{
-    obs_vl['censored'] <- as.numeric(obs_vl$VL <= threshold)
-    obs_vl[obs_vl['censored']==1,'VL'] <- threshold
+    obs_vl['censored'] <- as.numeric(obs_vl$VL <= detectionlimit)
+    obs_vl[obs_vl['censored']==1,'VL'] <- detectionlimit
   }
-  write.csv(obs_vl, paste0(data_path, N_test, "obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".csv"))
+  # write.csv(obs_vl, paste0(data_path, N_test, "obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".csv"))
   
   return(obs_vl)
 }
@@ -398,7 +401,6 @@ run_monolix <- function(dataFile, modelFile, headerTypes, covariateModel, initia
   }
 }
 
-
 run_monolix_script <- function(N_partici, M, S, iter) {
   # Set the path to the data and model files
   dataFile <- paste0(data_path, N_test, "obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".csv")
@@ -407,8 +409,8 @@ run_monolix_script <- function(N_partici, M, S, iter) {
   } else{
     headerTypes <- c("ignore", "id", "time", "observation", "ignore", "cens")
   }
-  projectFile = paste0( N_test,"obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".mlxtran")
-  modelFile <- paste0(model_path,"Model.txt")
+  projectFile = paste0(N_test,"obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".mlxtran")
+  modelFile <- paste0(model_path,"Model_simulation.txt")
   
   # covariate model
   covariateModel <- list(
@@ -473,47 +475,18 @@ Covfun2 <- function(pars){
 }
 
 
-# ## Compute CI of population parameters
-# parameter_confidence_intervals <- function(population_parameters) {
-#   population_parameters <- population_parameters %>%
-#     rownames_to_column(., var = "parameter") %>%
-#     as.data.frame() %>%
-#     mutate(se_trans = ifelse((endsWith(parameter, "_pop") | startsWith(parameter, "omega_")),
-#                              sqrt(log((1 + sqrt(1 + (2 * se_sa / value)^2)) / 2)), NA)) %>%
-#     mutate(lower = ifelse((endsWith(parameter, "_pop") | startsWith(parameter, "omega_")),
-#                           exp(log(value) + qnorm(alpha / 2) * se_trans),
-#                           value + qnorm(alpha / 2) * se_sa),
-#            upper = ifelse((endsWith(parameter, "_pop") | startsWith(parameter, "omega_")),
-#                           exp(log(value) + qnorm(1 - (alpha / 2)) * se_trans),
-#                           value + qnorm(1 - (alpha / 2)) * se_sa)) %>%
-#     dplyr::select(parameter, value, lower, upper, CV, se_sa, rse_sa) %>%
-#     column_to_rownames(., var = "parameter") %>%
-#     suppressWarnings()
-#   return(population_parameters)
-# }
-
-
-
-
 # generate ground truth VLs (step1)
 esti_vl <- function(params){
   
-  infectiontime <- params[['tau']]
-  # newtimes <- c(seq(-infectiontime, 30-infectiontime, 0.01))
   newtimes <- c(seq(0, max_time, 0.01))
   
   sR_pars <- c(beta = params[['beta']], gamma = params[['gamma']], delta = params[['delta']])
   sR_pars_lower <- c(beta = params[['beta_lower']], gamma = params[['gamma_lower']], delta = params[['delta_lower']])
   sR_pars_upper <- c(beta = params[['beta_upper']], gamma = params[['gamma_upper']], delta = params[['delta_upper']])
   
-  # sR <- Covfun2(sR_pars)
-  # sR_lower <- Covfun2(sR_pars_lower)
-  # sR_upper <- Covfun2(sR_pars_upper)
   
   fitted <- Covfun2(sR_pars)
-  infectiontime <- params[['tau_lower']]
   fitted_lower <- Covfun2(sR_pars_lower)
-  infectiontime <- params[['tau_upper']]
   fitted_upper <- Covfun2(sR_pars_upper)
   
   fitted1 <- data.frame(time = newtimes, aV = fitted$aV, aV_lower = fitted_lower$aV, aV_upper = fitted_upper$aV)
@@ -538,147 +511,224 @@ plot_vl <- function(fit, title, curvecolor){
 
 
 #### 4. Comparison
-# get_duration <- function(fit, infectionlimit){
-#   duration <- numeric(length(fit))
-#   for (i in 1:length(fit)){
-#     duration[i] <- max(fit[i]$time[fit[i]$aV > infectionlimit]) - min(fit[i]$time[fit[i]$aV > infectionlimit])
-#   }
-#   return(duration)
+vl_95CI <- function(data){
+  mean_val <- mean(data)
+  se <- sd(data)
+  lower_bound <- mean_val - qt(1 - alpha/2, length(data) - 1) * se
+  upper_bound <- mean_val + qt(1 - alpha/2, length(data) - 1) * se
+  return(c(mean_val, lower_bound, upper_bound))
+}
+
+# 25%, 75% quantile
+vl_25_75QT <- function(data) {
+  lower_bound <- quantile(data, alpha/2)
+  upper_bound <- quantile(data, 1-alpha/2)
+  return(c(median(data), lower_bound, upper_bound))
+}
+
+
+# vl_95Q<- function(data, alpha = 0.05) {
+#   lower_bound <- quantile(data, alpha / 2)
+#   upper_bound <- quantile(data, 1 - (alpha / 2))
+#   return(c(median(data), lower_bound, upper_bound))
+# }
+
+
+# vl_95CI_2 <- function(data, alpha = 0.05) {
+#   n <- length(data)
+#   s <- sqrt(mean(data, na.rm = TRUE))
+#   
+#   df <- n - 1
+#   chi2_lower <- qchisq(1 - alpha/2, df)
+#   chi2_upper <- qchisq(alpha/2, df)
+#   
+#   lower <- sqrt((df * s^2) / chi2_lower)
+#   upper <- sqrt((df * s^2) / chi2_upper)
+#   
+#   return(c(s, lower, upper))
+# }
+
+
+# bootstrap
+# vl_95CI_bootstrap <- function(data, alpha = 0.05, nboot = 1000) {
+#   n <- length(data)
+#   boot_samples <- replicate(nboot, sample(data, n, replace = TRUE))
+#   boot_means <- apply(boot_samples, 2, mean)
+#   
+#   lower_bound <- quantile(boot_means, alpha / 2)
+#   upper_bound <- quantile(boot_means, 1 - (alpha / 2))
+#   
+#   return(c(mean(data), lower_bound, upper_bound))
+# }
+
+
+## log
+# vl_95CI_log <- function(data, alpha = 0.05) {
+#   n <- length(data)
+#   log_data <- log(data)
+#   mean_log <- mean(log_data)
+#   sd_log <- sd(log_data)
+#   
+#   lower_bound <- exp(mean_log - qt(1 - alpha/2, n - 1) * (sd_log / sqrt(n)))
+#   upper_bound <- exp(mean_log + qt(1 - alpha/2, n - 1) * (sd_log / sqrt(n)))
+#   
+#   return(c(mean(data), lower_bound, upper_bound))
 # }
 # 
-# get_peaksize <- function(fit){
-#   peaksize <- numeric(length(fit))
-#   for (i in 1:length(fit)){
-#     peaksize[i] <- max(fit[i]$aV)
-#   }
-#   return(peaksize)
-# }
-# 
-# get_peaktime <- function(fit){
-#   peaktime <- numeric(length(fit))
-#   for (i in 1:length(fit)){
-#     peaktime[i] <- fit[i]$time[fit[i]$aV == max(fit[i]$aV)]
-#   }
-#   return(peaktime)
+# vl_95CI_log2 <- function(data, alpha = 0.05) {
+#   n <- length(data)
+#   log_data <- log(data)
+#   s <- sd(log_data)
+#   df <- n - 1
+#   chi2_lower <- qchisq(1 - alpha/2, df)
+#   chi2_upper <- qchisq(alpha/2, df)
+#   
+#   lower <- exp(sqrt((df * s^2) / chi2_lower))
+#   upper <- exp(sqrt((df * s^2) / chi2_upper))
+#   
+#   return(c(mean(data), lower, upper)) # mean(data)
 # }
 
 
-get_confidence_interval <- function(fit_df, dataname){
+draw_trajectory <- function(pop_params) {
+  parms <- get_parameters(population_parameters = pop_params)
   
-  if (dataname=="cross-sectional data"){
-    plot_col = "#3772ff"
-  } else { plot_col = "#ff7f7e"}
+  # The population fit.
+  pop_fit <- fit_model(parameters = parms)
   
-  combined_data <- bind_rows(fit_df, .id = "simulation_id")
-
-  # confidence_data <- combined_data %>%
-  #   group_by(time) %>%
-  #   summarise(
-  #     mean_aV = mean(aV),
-  #     lower_CI = mean_aV - qt(1-alpha/2, df = K - 1) * sd(aV) / sqrt(K),
-  #     upper_CI = mean_aV + qt(1-alpha/2, df = K - 1) * sd(aV) / sqrt(K)
-  #   )
+  # Sample from the parameter distribution.
+  sim_parms <- simulate_population_parameters(predicted_parameters = parms, population_parameters = pop_params, n = 100)
   
-  # 2.5th, 97.5th percentile
-  confidence_data <- combined_data %>%
-    group_by(time) %>%
-    summarise(
-      mean_aV = mean(aV),
-      lower_CI = quantile(aV, 0.025),
-      upper_CI = quantile(aV, 0.975)
-    )
-  
-  confidence_plot <- ggplot(confidence_data, aes(x = time)) +
-    geom_line(aes(y = mean_aV, color="Mean Viral load"), linewidth=1.8, linetype = "solid") +
-    geom_ribbon(aes(ymin = lower_CI, ymax = upper_CI, fill="Confidence interval"), alpha = 0.2) +
-    labs(title = paste0("Confidence Interval of ", dataname), y = "Viral RNA loads", x = "Time") +
-    scale_fill_manual(values = c("Confidence interval" = plot_col)) +
-    scale_color_manual(values = c("Mean Viral load" = plot_col)) +
-    coord_cartesian(ylim = c(0, 10)) +
-    scale_x_continuous(limits = c(0, 20)) +
-    theme_bw() +
-    theme(plot.title=element_text(hjust=0.5, size=20, face='bold'),
-          legend.position = "top", legend.title = element_blank(),
-          axis.title = element_text(size = 14, face = "bold"),
-          axis.text = element_text(size = 14),
-          legend.text = element_text(size = 14))
-  
-  return(list(confidence_data, confidence_plot))
-}
-
-get_credible_interval <- function(fit_df, dataname){
-  
-  if (dataname=="cross-sectional data"){
-    plot_col = "#3772ff"
-  } else { plot_col = "#ff7f7e"}
-  
-  combined_data <- bind_rows(fit_df, .id = "simulation_id")
-  
-  credible_data <- combined_data %>%
-    group_by(time) %>%
-    summarise(
-      median_aV = median(aV),
-      mean_aV = mean(aV),
-      lower_CrI = quantile(aV, 0.025), # 2.5% quantile
-      upper_CrI = quantile(aV, 0.975)  # 97.5% quantile
-    )
-  
-  credible_plot <- ggplot(credible_data, aes(x = time)) +
-    geom_line(aes(y = mean_aV, color="Mean Viral load"), linewidth = 1.8, linetype = "solid") +
-    geom_ribbon(aes(ymin = lower_CrI, ymax = upper_CrI, fill="Credible interval"), alpha = 0.2) +
-    labs(title = paste0("Credible Interval of ", dataname), y = "Viral RNA loads", x = "Time") +
-    scale_fill_manual(values = c("Credible interval" = plot_col)) +
-    scale_color_manual(values = c("Mean Viral load" = plot_col)) +
-    coord_cartesian(ylim = c(0, 10)) +
-    scale_x_continuous(limits = c(0, 20)) +
-    theme_bw() +
-    theme(plot.title=element_text(hjust=0.5, size=20, face='bold'),
-          legend.position = "top", legend.title = element_blank(),
-          axis.title = element_text(size = 14, face = "bold"),
-          axis.text = element_text(size = 14),
-          legend.text = element_text(size = 14))
-  
-  return(list(credible_data, credible_plot))
+  # Get prediction intervals.
+  sim_fit <- fit_simulations(simulated_parameters = sim_parms) # fitted VL
+  intervals <- simulated_prediction_intervals(predictions = sim_fit)
+  return(list(pop_fit, intervals))
 }
 
 
-get_plot_together <- function(df_list){
+get_parameters <- function(population_parameters) {
   
-  df_confidence <- df_list[[1]] ;  df_credible <- df_list[[2]]
+  # Extract the fixed effects (*_pop).
+  gamma_pop <- population_parameters["gamma_pop", "value"]
+  beta_pop <- population_parameters["beta1_pop", "value"]
+  delta_pop <- population_parameters["delta_pop", "value"]
+  tau_pop <- population_parameters["tau_pop", "value"]
   
-  
-  confidence_plot <- ggplot() +
-    geom_line(data = df_confidence, aes(x = time, y = mean_aV, color = "Mean Viral load (longitudinal)"), linewidth=1.8) +
-    geom_ribbon(data = df_confidence, aes(x = time, ymin = lower_CI, ymax = upper_CI, fill = "Confidence interval (longitudinal)"), alpha = 0.2) +
-    labs(title = "Confidence Interval", y = "Viral RNA loads", x = "Time") +
-    scale_fill_manual(values = c("Confidence interval" = "#ff7f7e")) +
-    scale_color_manual(values = c("Mean Viral load" = "#ff7f7e")) +
-    coord_cartesian(ylim = c(0, 10)) +
-    scale_x_continuous(limits = c(0, 25)) +
-    theme_bw() +
-    theme(plot.title = element_text(hjust = 0.5, size = 20, face = 'bold'),
-          legend.position = c(0.8,0.8), legend.title = element_blank(),
-          axis.title = element_text(size = 14, face = "bold"),
-          axis.text = element_text(size = 14),
-          legend.text = element_text(size = 14),
-          legend.box.background = element_rect(color = "black"))
-  
-  credible_plot <- ggplot() +
-    geom_line(data = df_credible, aes(x = time, y = mean_aV, color = "Mean Viral load (longitudinal)"), linewidth=1.8) +
-    geom_ribbon(data = df_credible, aes(x = time, ymin = lower_CrI, ymax = upper_CrI, fill = "Credible interval (longitudinal)"), alpha = 0.2) +
-    labs(title = "Credible Interval", y = "Viral RNA loads", x = "Time") +
-    scale_fill_manual(values = c( "Credible interval" = "#ff7f7e")) +
-    scale_color_manual(values = c("Mean Viral load" = "#ff7f7e")) +
-    coord_cartesian(ylim = c(0, 10)) +
-    scale_x_continuous(limits = c(0, 25)) +
-    theme_bw() +
-    theme(plot.title = element_text(hjust = 0.5, size = 20, face = 'bold'),
-          legend.position = c(0.8,0.8), legend.title = element_blank(),
-          axis.title = element_text(size = 14, face = "bold"),
-          axis.text = element_text(size = 14),
-          legend.text = element_text(size = 14),
-          legend.box.background = element_rect(color = "black"))
-  
-  
-  return(list(confidence_plot, credible_plot))
+  # Compute the predicted population parameters based on the covariate model.
+  predicted_parameters <- data.frame(gamma = gamma_pop ,
+                                     beta = beta_pop *  10**(-5),
+                                     delta = delta_pop,
+                                     tau = tau_pop)
+  colnames(predicted_parameters) <- c("gamma", "beta", "delta", "tau")
+  rownames(predicted_parameters) <- NULL
+  return(predicted_parameters)
 }
+
+
+fit_model <- function(parameters) {
+  # Check input.
+  if (is.vector(parameters)) {
+    parameters <- data.frame(t(parameters))
+  } else if (is.matrix(parameters)) {
+    parameters <- data.frame(parameters)
+  }
+  
+  if (!all(c("gamma", "beta", "delta", "tau") %in% colnames(parameters))) {
+    stop("Data is of incorrect format. Please check input parameters.", call. = FALSE)
+  } else if (nrow(parameters) > 1) {
+    stop("This function only supports model fitting for a single parameter set.", call. = FALSE)
+  }
+  
+  # Define the parameters.
+  gamma <- as.numeric(parameters$gamma) # maximum rate constant for viral replication
+  beta <- as.numeric(parameters$beta)   # rate constant for virus infection
+  delta <- as.numeric(parameters$delta) # death rate of infected cells
+  tau <- as.numeric(parameters$tau)     # time interval from infection to diagnosis
+  y <- c(f = 1, V = 0.01)               # initial state values for the ODE system
+  
+  # Times at which estimates for y are desired.
+  # The time scale here is days after infection (i.e. negative times do not make sense). # time: 감염 이후의 날
+  times <- seq(from = 0, to = 30, by = 0.01)
+  
+  # Derivatives of y with respect to time.
+  derivatives <- function(times, y, parms) {
+    with(as.list(c(y, parms)), {
+      df <- -beta * f * V             # fraction of uninfected cells
+      dV <- gamma * f * V - delta * V # amount of virus (copies/mL)
+      return(list(c(df, dV)))
+    })
+  }
+  
+  output <- lsoda(y = y, times = times, func = derivatives, parms = parameters, rtol = 1e-6, atol = 1e-12)
+  # output[, 3] <- replace(output[, 3], which(output[, 3] < 0), NA)
+  output <- cbind(time = output[, 1], VL = log10(output[, 3]))
+  return(data.frame(output))
+}
+
+
+
+
+
+fit_simulations <- function(simulated_parameters) {
+  # This function fits the viral dynamics model for each of the simulated parameter sets.
+  # 'simulated_parameters' must be a DataFrame object with simulated parameters.
+  
+  # Check input.
+  if (is.vector(simulated_parameters)) {
+    simulated_parameters <- data.frame(t(simulated_parameters))
+  } else if (is.matrix(simulated_parameters)) {
+    simulated_parameters <- data.frame(simulated_parameters)
+  }
+  
+  if (!all(c("gamma", "beta", "delta", "tau") %in% colnames(simulated_parameters))) {
+    stop("Data is of incorrect format. Please check input parameters.", call. = FALSE)
+  } else if (nrow(simulated_parameters) == 1) {
+    message("[WARNING] Only a single set of parameters found. Consider using the fit_model() function.")
+  }
+  
+  # Initialize the predictions matrix.
+  predictions <- matrix(NA,
+                        nrow = length(seq(from = 0, to = max_time, by = time_interval)),
+                        ncol = nrow(simulated_parameters))
+  
+  # Fit each simulated patient with the randomly sampled set of parameters.
+  for (i in 1:nrow(simulated_parameters)) {
+    parameters_i <- data.frame(gamma = simulated_parameters$gamma[i],
+                               beta = simulated_parameters$beta[i],
+                               delta = simulated_parameters$delta[i],
+                               tau = simulated_parameters$tau[i])
+    trajectory_i <- fit_model(parameters = parameters_i)
+    predictions[, i] <- trajectory_i$VL
+  }
+  
+  # Bind the time points and output the predictions matrix.
+  predictions <- data.frame(cbind(seq(from = 0, to = max_time, by = time_interval), predictions))
+  colnames(predictions) <- c("time", paste0("VL", 1:nrow(simulated_parameters)))
+  return(predictions)
+}
+
+simulated_prediction_intervals <- function(predictions) {
+  # This function determines the PIs for the simulated fits.
+  # 'predictions' refers to the prediction matrix obtained from the fit_simulations() function.
+  
+  # Omit the time variable if present so that it is not calculated into the PIs.
+  if ("time" %in% colnames(predictions)) {
+    time <- predictions %>% dplyr::select("time")
+    predictions <- predictions %>% dplyr::select(-c("time"))
+  } else {
+    time <- seq(from = 0, to = max_time, by = time_interval)
+    if (length(time) != nrow(predictions)) {
+      stop("Fitting of the time dimension is incorrect. Please check the prediction matrix.", call. = FALSE)
+    }
+  }
+  
+  # Define the PIs, which represent the (1 - alpha) * 100% estimates across simulations at each particular time point (row).
+  lower <- apply(predictions, MARGIN = 1, FUN = function(x) (quantile(x, probs = alpha / 2, na.rm = TRUE)))
+  upper <- apply(predictions, MARGIN = 1, FUN = function(x) (quantile(x, probs = 1 - (alpha / 2), na.rm = TRUE)))
+  
+  # Add the time variable back.
+  intervals <- data.frame(cbind(time, lower, upper))
+  colnames(intervals) <- c("time", "lower", "upper")
+  return(intervals)
+}
+

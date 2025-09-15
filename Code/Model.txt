@@ -1,0 +1,20 @@
+[LONGITUDINAL]
+input = {gamma,delta,beta1,tau}
+
+EQUATION:
+odeType = stiff
+beta=beta1*10^(-5)
+t0    = -tau
+T_0=1
+V_0=0.01
+
+
+ddt_T = -beta*T*V
+ddt_V = gamma*T*V-delta*V
+
+;
+Vaa=log10((V))
+Vbb=log10((max(V, 0.01))) 
+
+OUTPUT:
+output = {Vbb}
