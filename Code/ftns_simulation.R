@@ -1,12 +1,10 @@
 #https://monolix.lixoft.com/monolix-api/#ListFunctions
 
 
-# Scenario 1: S=2, M=10, N_test=100 (# of data: 1,000)
 # T: Random sampling from the distribution of tau
 # S: Interval between measurements
 # M: The number of test measurements
 # E: Random sampling from the Gaussian distribution based on the error model
-# N_test, N_cros: 각각의 분석에서 사용할 true curve 개수
 # K: The number of iterations for one scenario
 # detectionlimit: Detection limit of viral load
 
@@ -186,7 +184,7 @@ estimate_groundtruth <- function(true_vl_par_10000, S, M, N_partici, iter){
     true_vl[[paste0("VL_", i)]] <- indiVL$aV 
   }
   
-  # write.csv(true_vl, paste0(data_path_ground_truth, N_test, "truedata_N_",N_partici,"_M_",M,"_S_",S,"_realnbr_", iter, ".csv"))
+  write.csv(true_vl, paste0(data_path_ground_truth, N_test, "truedata_N_",N_partici,"_M_",M,"_S_",S,"_realnbr_", iter, ".csv"))
   # Only integer times
   true_vl <- true_vl[true_vl$time %in% seq(0, 30, by = 1), ]
   
@@ -197,8 +195,8 @@ estimate_groundtruth <- function(true_vl_par_10000, S, M, N_partici, iter){
            censored = 0)
   true_vl_long['censored'] <- as.numeric(true_vl_long$VL <= detectionlimit)
   true_vl_long[true_vl_long['censored']==1,'VL'] <- detectionlimit
-  # write.csv(true_vl_long, paste0(data_path_ground_truth, N_test, "truedata_N_",N_partici,"_M_",M,"_S_",S,"_", iter, ".csv"))
-  # run_monolix_script_ground_truth(N_partici, M, S) # estimated trajectory of ground truth VL
+  write.csv(true_vl_long, paste0(data_path_ground_truth, N_test, "truedata_N_",N_partici,"_M_",M,"_S_",S,"_", iter, ".csv"))
+  run_monolix_script_ground_truth(N_partici, M, S) # estimated trajectory of ground truth VL
   
   return(true_vl)
 }
@@ -240,7 +238,7 @@ sim_paras <- function(true_vl, S, M, N_partici, iter){
     obs_vl['censored'] <- as.numeric(obs_vl$VL <= detectionlimit)
     obs_vl[obs_vl['censored']==1,'VL'] <- detectionlimit
   }
-  # write.csv(obs_vl, paste0(data_path, N_test, "obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".csv"))
+  write.csv(obs_vl, paste0(data_path, N_test, "obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".csv"))
   
   return(obs_vl)
 }
@@ -339,30 +337,24 @@ run_monolix <- function(dataFile, modelFile, headerTypes, covariateModel, initia
                          observationTypes = list("VL" = "continuous")),
              modelFile = modelFile)
   
-  # Save the project.
-  saveProject(projectFile = projectFile)
-  
   # Set the structural model.
   setStructuralModel(modelFile = modelFile)
   
   # Set the observational model and the error model type to be used.
   # Observations are normally distributed and the error is constant.
-  setObservationDistribution(VL = "normal")
-  setErrorModel(VL = "constant")
+  setObservationDistribution(VL_ = "normal")
+  setErrorModel(VL_ = "constant")
   
   # Set parameters to a log-normal distribution to ensure positiveness.
   # Allow random effects for all parameters.
   setIndividualParameterDistribution(gamma = "logNormal", beta1 = "logNormal", delta = "logNormal", tau = "logNormal")
   setIndividualParameterVariability(gamma = TRUE, beta1 = TRUE, delta = TRUE, tau = TRUE)
   
-  # Transform the continuous age to set the reference to the weighted mean age of the dataset.
-  # addContinuousTransformedCovariate(tAge = "Age - 42")
-  
-  # Set the covariate model.
-  setCovariateModel(covariateModel)
-  
   # Set the initial population parameters and estimation methods.
-  setPopulationParameterInformation(initialParameters)
+  setPopulationParameterInformation(gamma_pop = list(initialValue = 20.0),
+                                    beta1_pop = list(initialValue = 0.01),
+                                    delta_pop = list(initialValue = 1.0),
+                                    tau_pop = list(initialValue = 5.0))
   saveProject(projectFile = projectFile)
   
   # Set higher maximum iterations as convergence may not be reached with larger sample sizes.
@@ -390,7 +382,7 @@ run_monolix <- function(dataFile, modelFile, headerTypes, covariateModel, initia
   setScenario(scenario)
   runScenario()
   
-  # Save the project again.
+  # Save the project.
   saveProject(projectFile = projectFile)
   
   # Compute and export charts data.
@@ -412,14 +404,8 @@ run_monolix_script <- function(N_partici, M, S, iter) {
   projectFile = paste0(N_test,"obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".mlxtran")
   modelFile <- paste0(model_path,"Model_simulation.txt")
   
-  # covariate model
-  covariateModel <- list(
-    "CL" = c("WT" = FALSE, "AGE" = FALSE),
-    "V" = c("WT" = FALSE, "AGE" = FALSE)
-  )
-  
   # initial value of parameters
-  initialParameters <- list(
+  initialParameters <- c(
     "gamma" = list(initialValue = 20.0, method = "estimate"),
     "beta1" = list(initialValue = 0.01, method = "estimate"),
     "delta" = list(initialValue = 1.0, method = "estimate"),
@@ -431,7 +417,6 @@ run_monolix_script <- function(N_partici, M, S, iter) {
     dataFile = dataFile,
     modelFile = modelFile,
     headerTypes = headerTypes,
-    covariateModel = covariateModel,
     initialParameters = initialParameters,
     projectFile = projectFile,
     dataDirectory = data_path,
@@ -469,7 +454,6 @@ Covfun2 <- function(pars){
   
   times<-c(seq(0,30,0.01))
   out<-lsoda(y=y, parms=pars, times=times, func=derivs, rtol=0.00004, atol=0.00000000000001)
-  # out2<-cbind(time=out[,1],aV=((log10(out[,3]))))
   out2<-data.frame(aV=(log10(out[,3])))
   return(out2)
 }
@@ -511,11 +495,11 @@ plot_vl <- function(fit, title, curvecolor){
 
 
 #### 4. Comparison
-vl_95CI <- function(data){
+vl_onestd <- function(data){
   mean_val <- mean(data)
   se <- sd(data)
-  lower_bound <- mean_val - qt(1 - alpha/2, length(data) - 1) * se
-  upper_bound <- mean_val + qt(1 - alpha/2, length(data) - 1) * se
+  lower_bound <- mean_val - se
+  upper_bound <- mean_val + se
   return(c(mean_val, lower_bound, upper_bound))
 }
 
@@ -525,69 +509,6 @@ vl_25_75QT <- function(data) {
   upper_bound <- quantile(data, 1-alpha/2)
   return(c(median(data), lower_bound, upper_bound))
 }
-
-
-# vl_95Q<- function(data, alpha = 0.05) {
-#   lower_bound <- quantile(data, alpha / 2)
-#   upper_bound <- quantile(data, 1 - (alpha / 2))
-#   return(c(median(data), lower_bound, upper_bound))
-# }
-
-
-# vl_95CI_2 <- function(data, alpha = 0.05) {
-#   n <- length(data)
-#   s <- sqrt(mean(data, na.rm = TRUE))
-#   
-#   df <- n - 1
-#   chi2_lower <- qchisq(1 - alpha/2, df)
-#   chi2_upper <- qchisq(alpha/2, df)
-#   
-#   lower <- sqrt((df * s^2) / chi2_lower)
-#   upper <- sqrt((df * s^2) / chi2_upper)
-#   
-#   return(c(s, lower, upper))
-# }
-
-
-# bootstrap
-# vl_95CI_bootstrap <- function(data, alpha = 0.05, nboot = 1000) {
-#   n <- length(data)
-#   boot_samples <- replicate(nboot, sample(data, n, replace = TRUE))
-#   boot_means <- apply(boot_samples, 2, mean)
-#   
-#   lower_bound <- quantile(boot_means, alpha / 2)
-#   upper_bound <- quantile(boot_means, 1 - (alpha / 2))
-#   
-#   return(c(mean(data), lower_bound, upper_bound))
-# }
-
-
-## log
-# vl_95CI_log <- function(data, alpha = 0.05) {
-#   n <- length(data)
-#   log_data <- log(data)
-#   mean_log <- mean(log_data)
-#   sd_log <- sd(log_data)
-#   
-#   lower_bound <- exp(mean_log - qt(1 - alpha/2, n - 1) * (sd_log / sqrt(n)))
-#   upper_bound <- exp(mean_log + qt(1 - alpha/2, n - 1) * (sd_log / sqrt(n)))
-#   
-#   return(c(mean(data), lower_bound, upper_bound))
-# }
-# 
-# vl_95CI_log2 <- function(data, alpha = 0.05) {
-#   n <- length(data)
-#   log_data <- log(data)
-#   s <- sd(log_data)
-#   df <- n - 1
-#   chi2_lower <- qchisq(1 - alpha/2, df)
-#   chi2_upper <- qchisq(alpha/2, df)
-#   
-#   lower <- exp(sqrt((df * s^2) / chi2_lower))
-#   upper <- exp(sqrt((df * s^2) / chi2_upper))
-#   
-#   return(c(mean(data), lower, upper)) # mean(data)
-# }
 
 
 draw_trajectory <- function(pop_params) {
