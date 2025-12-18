@@ -1,15 +1,6 @@
 #https://monolix.lixoft.com/monolix-api/#ListFunctions
 
 
-# T: Random sampling from the distribution of tau
-# S: Interval between measurements
-# M: The number of test measurements
-# E: Random sampling from the Gaussian distribution based on the error model
-# K: The number of iterations for one scenario
-# detectionlimit: Detection limit of viral load
-
-
-
 # Model
 Covfun <- function(pars){
   
