@@ -1,5 +1,5 @@
 rm(list=ls())
-
+ 
 # install.packages("C:/ProgramData/Lixoft/MonolixSuite2023R1/connectors/lixoftConnectors.tar.gz", 
 #                  repos = NULL, type="source", INSTALL_opts ="--no-multiarch")
 
@@ -16,7 +16,7 @@ environment <- new.env()
 source("./functions_for_simulation.R", local = environment)
 attach(environment)
 
-seed <- 250121    # seed for pseudo-random number generation
+seed <- 250121  # set the seed for pseudo-random number generation
 set.seed(seed)
 
 # Basic settings
