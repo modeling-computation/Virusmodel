@@ -1,22 +1,22 @@
 rm(list=ls())
- 
+
 # install.packages("C:/ProgramData/Lixoft/MonolixSuite2023R1/connectors/lixoftConnectors.tar.gz", 
 #                  repos = NULL, type="source", INSTALL_opts ="--no-multiarch")
 
 libraries = c("deSolve", "dplyr","reshape2","openxlsx","tidyverse","lubridate",
               "readxl","ggplot2","viridisLite","colorspace","ggpubr","gridExtra",
               "png","grid","magrittr","scales","RColorBrewer","fBasics",
-              "lixoftConnectors", "RJSONIO", "boot")
+              "RJSONIO", "boot") #"lixoftConnectors"
 
 # for(x in libraries) { if (!require(x)) install.packages(x) }
 for(x in libraries) { library(x,character.only=TRUE,warn.conflicts=FALSE) }
-initializeLixoftConnectors(software = "monolix")
+# initializeLixoftConnectors(software = "monolix")
 
 environment <- new.env()
-source("./functions_for_simulation.R", local = environment)
+source("./ftns_simulation.R", local = environment)
 attach(environment)
 
-seed <- 250121  # set the seed for pseudo-random number generation
+seed <- 250121    # seed for pseudo-random number generation
 set.seed(seed)
 
 # Basic settings
@@ -57,7 +57,6 @@ sampled_true_vl_par <- data.frame(ID=1:N, beta=sim_params$beta,
                                   gamma=sim_params$gamma,
                                   delta=sim_params$delta)
 
-h=1
 for (N_test in N_test_list){
   r=1 # index for saving to data frame
   
@@ -86,19 +85,22 @@ for (N_test in N_test_list){
   # Coverage score result data frame
   result_coverage <- data.frame(time = seq(min_time, max_time, by=time_interval), M1=0, M2=0, M3=0, M4=0, M5=0, M8=0)
   
-  # Parameter result data frame
+  # # Parameter result data frame
   result_beta <- data.frame(index = 1:K,
                             beta_U1=0, beta_U2=0, beta_U3=0, beta_U4=0, beta_U5=0, beta_U8=0)
   result_gamma <- data.frame(index = 1:K,
                              gamma_U1=0, gamma_U2=0, gamma_U3=0, gamma_U4=0, gamma_U5=0, gamma_U8=0)
   result_delta <- data.frame(index = 1:K,
                              delta_U1=0, delta_U2=0, delta_U3=0, delta_U4=0, delta_U5=0, delta_U8=0)
+  result_tau <- data.frame(index = 1:K,
+                           tau_U1=0, tau_U2=0, tau_U3=0, tau_U4=0, tau_U5=0, tau_U8=0)
   
-  result_parameter <- as.data.frame(matrix(0, nrow = length(S_list)*length(M_list)*length(N_test), ncol = 14))
+  result_parameter <- as.data.frame(matrix(0, nrow = length(S_list)*length(M_list)*length(N_test), ncol = 17))
   colnames(result_parameter) <- c("interval", "indi_test_num",
                                   "beta", "beta_lower", "beta_upper",
                                   "delta", "delta_lower", "delta_upper",
                                   "gamma", "gamma_lower", "gamma_upper",
+                                  "tau", "tau_lower", "tau_upper",
                                   "participant_num", "total_test_num", "variant")
   result_parameter$interval <- rep(S_list, each = length(M_list)*length(N_test))
   result_parameter$indi_test_num <- rep(M_list, each = length(N_test)*length(S_list))
@@ -109,6 +111,8 @@ for (N_test in N_test_list){
   colnames(df_gamma) <- c("U1", "U2", "U3", "U4", "U5", "U8")
   df_delta <- as.data.frame(matrix(0, nrow = K, ncol = length(S_list)*length(M_list)))
   colnames(df_delta) <- c("U1", "U2", "U3", "U4", "U5", "U8")
+  df_tau <- as.data.frame(matrix(0, nrow = K, ncol = length(S_list)*length(M_list)))
+  colnames(df_tau) <- c("U1", "U2", "U3", "U4", "U5", "U8")
   df_esti_duration <- as.data.frame(matrix(0, nrow = K, ncol = length(S_list)*length(M_list)))
   colnames(df_esti_duration) <- c("U1", "U2", "U3", "U4", "U5", "U8")
   df_esti_peaksize <- as.data.frame(matrix(0, nrow = K, ncol = length(S_list)*length(M_list)))
@@ -123,7 +127,6 @@ for (N_test in N_test_list){
   colnames(df_rmse_peaksize) <- c("U1", "U2", "U3", "U4", "U5", "U8")
   df_rmse_peaktime <- as.data.frame(matrix(0, nrow = K, ncol = length(S_list)*length(M_list)))
   colnames(df_rmse_peaktime) <- c("U1", "U2", "U3", "U4", "U5", "U8")
-  
   
   cat("Total data points = ", N_test, "\n")
   
@@ -151,7 +154,7 @@ for (N_test in N_test_list){
       true_df$duration <- true_duration ; true_df$peaksize <- true_peaksize ; true_df$peaktime <- true_peaktime
       
       
-      #### 2. Synthetic data & estimate K=100 viral trajectories
+      ## 2. Synthetic data & estimate K=100 viral trajectories
       monolix_startup(monolixPath)
       for (i in 1:K){
         # 2-1. Make n ground truth
@@ -198,19 +201,20 @@ for (N_test in N_test_list){
         result_beta[result_beta$index == i, paste0("beta_U", M)] <- sim_pop['beta1_pop','value']
         result_gamma[result_gamma$index == i, paste0("gamma_U", M)] <- sim_pop['gamma_pop','value']
         result_delta[result_delta$index == i, paste0("delta_U", M)] <- sim_pop['delta_pop','value']
+        result_tau[result_tau$index == i, paste0("tau_U", M)] <- sim_pop['tau_pop','value']
       }
       
-      ### 4. Comparison
-      # Calculate the median and 95% PI
-      esti_duration_ci <- vl_onestd(esti_duration)
-      esti_peaksize_ci <- vl_onestd(esti_peaksize) # median, lower, upper
-      esti_peaktime_ci <- vl_onestd(esti_peaktime)
+      ## 4. Comparison
+      Calculate the median and 95% PI
+      esti_duration_ci <- vl_1STD(esti_duration)
+      esti_peaksize_ci <- vl_1STD(esti_peaksize) # median, lower, upper
+      esti_peaktime_ci <- vl_1STD(esti_peaktime)
       
       # Calculate the RMSE and 95% CI
-      rmse_ci <- vl_onestd(rmse_vl)
-      duration_rmse_ci <- vl_onestd(rmse_duration)
-      peaksize_rmse_ci <- vl_onestd(rmse_peaksize)
-      peaktime_rmse_ci <- vl_onestd(rmse_peaktime)
+      rmse_ci <- vl_1STD(rmse_vl)
+      duration_rmse_ci <- vl_1STD(rmse_duration)
+      peaksize_rmse_ci <- vl_1STD(rmse_peaksize)
+      peaktime_rmse_ci <- vl_1STD(rmse_peaktime)
       
       # Calculate coverage score of estimated viral load
       coverage_vl_ratio <- numeric(length(pop_fit$time))
@@ -221,10 +225,11 @@ for (N_test in N_test_list){
       result_coverage[,r+1] <- coverage_vl_ratio
       r <- r+1
       
-      # Calculate the 95% CI for parameters
-      beta_ci <- vl_25_75QT(result_beta[,paste0("beta_U", M)] )
-      gamma_ci <- vl_25_75QT(result_gamma[,paste0("gamma_U", M)])
-      delta_ci <- vl_25_75QT(result_delta[,paste0("delta_U", M)])
+      ## Calculate the 95% CI for parameters
+      beta_ci <- vl_95QT(result_beta[,paste0("beta_U", M)] )
+      gamma_ci <- vl_95QT(result_gamma[,paste0("gamma_U", M)])
+      delta_ci <- vl_95QT(result_delta[,paste0("delta_U", M)])
+      tau_ci <- vl_95QT(result_tau[,paste0("tau_U", M)])
       
       # RMSE result
       result_df[result_df$interval == S & result_df$indi_test_num == M & result_df$total_test_num == N_test & result_df$participant_num == N_partici, "RMSE_VL"] <- rmse_ci[1]
@@ -268,13 +273,19 @@ for (N_test in N_test_list){
       result_parameter[result_parameter$interval == S & result_parameter$indi_test_num == M & result_parameter$total_test_num == N_test & result_parameter$participant_num == N_partici, "gamma"] <- gamma_ci[1]
       result_parameter[result_parameter$interval == S & result_parameter$indi_test_num == M & result_parameter$total_test_num == N_test & result_parameter$participant_num == N_partici, "gamma_lower"] <- gamma_ci[2]
       result_parameter[result_parameter$interval == S & result_parameter$indi_test_num == M & result_parameter$total_test_num == N_test & result_parameter$participant_num == N_partici, "gamma_upper"] <- gamma_ci[3]
+      
+      result_parameter[result_parameter$interval == S & result_parameter$indi_test_num == M & result_parameter$total_test_num == N_test & result_parameter$participant_num == N_partici, "tau"] <- tau_ci[1]
+      result_parameter[result_parameter$interval == S & result_parameter$indi_test_num == M & result_parameter$total_test_num == N_test & result_parameter$participant_num == N_partici, "tau_lower"] <- tau_ci[2]
+      result_parameter[result_parameter$interval == S & result_parameter$indi_test_num == M & result_parameter$total_test_num == N_test & result_parameter$participant_num == N_partici, "tau_upper"] <- tau_ci[3]
     }
-    
   }
   
+  
   write.csv(result_df, paste0("../../Result/delta/RMSE_",N_test,"_S",S,".csv"))
-  write.csv(result_df2, paste0("../../Result/delta/MEAN_",N_test,"_S",S,".csv"))
-  write.csv(true_df, paste0("../../Result/delta/True_",N_test,"_S",S,".csv"))
+  write.csv(result_df2, paste0("../../Result/delta/MEAN_1STD_",N_test,"_S",S,".csv"))
+  write.csv(true_df, paste0("../../Result/delta/True_MEAN_",N_test,"_S",S,".csv"))
   write.csv(result_coverage, paste0("../../Result/delta/Coveragescore_",N_test,"_S",S,".csv"))
-  write.csv(result_parameter, paste0("../../Result/delta/Parameter_",N_test,"_S",S,".csv"), row.names = FALSE)
+  write.csv(result_parameter, paste0("../../Result/delta/Parameter_QT_",N_test,"_S",S,".csv"), row.names = FALSE)
+  
 }
+
