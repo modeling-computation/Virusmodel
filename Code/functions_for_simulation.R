@@ -1,4 +1,13 @@
-#https://monolix.lixoft.com/monolix-api/#ListFunctions
+
+# Scenario 1: S=2, M=10, N_test=100 (# of data: 1,000)
+# T: Random sampling from the distribution of tau
+# S: Interval between measurements
+# M: The number of test measurements
+# E: Random sampling from the Gaussian distribution based on the error model
+# N_test, N_cros: the number of true curves
+# K: The number of iterations for one scenario
+# detectionlimit: Detection limit of viral load
+
 
 
 # Model
@@ -147,7 +156,7 @@ make_indiVL <- function(IDnum, true_vl_par_df){
 }
 
 
-# generate observed VLs (step2) - One trial (Simulation)
+# generate observed VLs (step2)
 make_obs_vl <- function(true_vl_df, IDnum, Tnum, Snum, Mnum) {
   # True VL values
   truevl <- true_vl_df[c("time", paste0("VL_",IDnum))]
@@ -161,7 +170,6 @@ make_obs_vl <- function(true_vl_df, IDnum, Tnum, Snum, Mnum) {
 }
 
 
-###
 estimate_groundtruth <- function(true_vl_par_10000, S, M, N_partici, iter){
   
   true_vl <- data.frame(time=times)
@@ -193,8 +201,6 @@ estimate_groundtruth <- function(true_vl_par_10000, S, M, N_partici, iter){
 }
 
 
-
-##
 
 sim_paras <- function(true_vl, S, M, N_partici, iter){
   
@@ -236,10 +242,6 @@ sim_paras <- function(true_vl, S, M, N_partici, iter){
 
 
 #### 2. Run monolix
-## Author: Hoong Kai Chua
-
-
-################################## FIT DATA IN MONOLIX ##################################
 
 monolix_startup <- function(monolixPath = NULL) {
   # This function sets up the Monolix software in R and ensures that items have been loaded correctly.
@@ -328,24 +330,30 @@ run_monolix <- function(dataFile, modelFile, headerTypes, covariateModel, initia
                          observationTypes = list("VL" = "continuous")),
              modelFile = modelFile)
   
+  # Save the project.
+  saveProject(projectFile = projectFile)
+  
   # Set the structural model.
   setStructuralModel(modelFile = modelFile)
   
   # Set the observational model and the error model type to be used.
   # Observations are normally distributed and the error is constant.
-  setObservationDistribution(VL_ = "normal")
-  setErrorModel(VL_ = "constant")
+  setObservationDistribution(VL = "normal")
+  setErrorModel(VL = "constant")
   
   # Set parameters to a log-normal distribution to ensure positiveness.
   # Allow random effects for all parameters.
   setIndividualParameterDistribution(gamma = "logNormal", beta1 = "logNormal", delta = "logNormal", tau = "logNormal")
   setIndividualParameterVariability(gamma = TRUE, beta1 = TRUE, delta = TRUE, tau = TRUE)
   
+  # Transform the continuous age to set the reference to the weighted mean age of the dataset.
+  # addContinuousTransformedCovariate(tAge = "Age - 42")
+  
+  # Set the covariate model.
+  setCovariateModel(covariateModel)
+  
   # Set the initial population parameters and estimation methods.
-  setPopulationParameterInformation(gamma_pop = list(initialValue = 20.0),
-                                    beta1_pop = list(initialValue = 0.01),
-                                    delta_pop = list(initialValue = 1.0),
-                                    tau_pop = list(initialValue = 5.0))
+  setPopulationParameterInformation(initialParameters)
   saveProject(projectFile = projectFile)
   
   # Set higher maximum iterations as convergence may not be reached with larger sample sizes.
@@ -373,7 +381,7 @@ run_monolix <- function(dataFile, modelFile, headerTypes, covariateModel, initia
   setScenario(scenario)
   runScenario()
   
-  # Save the project.
+  # Save the project again.
   saveProject(projectFile = projectFile)
   
   # Compute and export charts data.
@@ -395,8 +403,14 @@ run_monolix_script <- function(N_partici, M, S, iter) {
   projectFile = paste0(N_test,"obsdata_N_",N_partici,"_M_",M,"_S_",S,"_",iter,".mlxtran")
   modelFile <- paste0(model_path,"Model_simulation.txt")
   
+  # covariate model
+  covariateModel <- list(
+    "CL" = c("WT" = FALSE, "AGE" = FALSE),
+    "V" = c("WT" = FALSE, "AGE" = FALSE)
+  )
+  
   # initial value of parameters
-  initialParameters <- c(
+  initialParameters <- list(
     "gamma" = list(initialValue = 20.0, method = "estimate"),
     "beta1" = list(initialValue = 0.01, method = "estimate"),
     "delta" = list(initialValue = 1.0, method = "estimate"),
@@ -408,6 +422,7 @@ run_monolix_script <- function(N_partici, M, S, iter) {
     dataFile = dataFile,
     modelFile = modelFile,
     headerTypes = headerTypes,
+    covariateModel = covariateModel,
     initialParameters = initialParameters,
     projectFile = projectFile,
     dataDirectory = data_path,
@@ -445,6 +460,7 @@ Covfun2 <- function(pars){
   
   times<-c(seq(0,30,0.01))
   out<-lsoda(y=y, parms=pars, times=times, func=derivs, rtol=0.00004, atol=0.00000000000001)
+  # out2<-cbind(time=out[,1],aV=((log10(out[,3]))))
   out2<-data.frame(aV=(log10(out[,3])))
   return(out2)
 }
@@ -484,9 +500,7 @@ plot_vl <- function(fit, title, curvecolor){
   return(p)
 }
 
-
-#### 4. Comparison
-vl_onestd <- function(data){
+vl_1STD <- function(data){
   mean_val <- mean(data)
   se <- sd(data)
   lower_bound <- mean_val - se
@@ -494,13 +508,11 @@ vl_onestd <- function(data){
   return(c(mean_val, lower_bound, upper_bound))
 }
 
-# 25%, 75% quantile
-vl_25_75QT <- function(data) {
+vl_95QT <- function(data) {
   lower_bound <- quantile(data, alpha/2)
   upper_bound <- quantile(data, 1-alpha/2)
   return(c(median(data), lower_bound, upper_bound))
 }
-
 
 draw_trajectory <- function(pop_params) {
   parms <- get_parameters(population_parameters = pop_params)
